@@ -3,7 +3,11 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 export type ProxyErrorCode =
   | 'BAD_REQUEST'
   | 'METHOD_NOT_ALLOWED'
+  | 'PAYLOAD_TOO_LARGE'
+  | 'OVERLOADED'
+  | 'SERVER_SHUTTING_DOWN'
   | 'NO_HEALTHY_UPSTREAM'
+  | 'UPSTREAM_CAPACITY_EXCEEDED'
   | 'UPSTREAM_CONNECT_ERROR'
   | 'UPSTREAM_TIMEOUT'
   | 'UPSTREAM_PREMATURE_CLOSE'
@@ -11,10 +15,10 @@ export type ProxyErrorCode =
   | 'INTERNAL_PROXY_ERROR';
 
 export class ProxyError extends Error {
-  public readonly statusCode: number;
-  public readonly code: ProxyErrorCode;
+  readonly statusCode: number;
+  readonly code: ProxyErrorCode;
 
-  public constructor(
+  constructor(
     statusCode: number,
     code: ProxyErrorCode,
     message: string,
@@ -28,12 +32,16 @@ export class ProxyError extends Error {
 }
 
 const DISALLOWED_METHODS = new Set<string>(['CONNECT', 'TRACE']);
+const SAFE_RETRY_METHODS = new Set<string>(['GET', 'HEAD', 'OPTIONS']);
 
-/**
- * Validates that the incoming HTTP request conforms to safe reverse-proxy semantics
- * and rejects open-proxy / smuggling vectors before selecting an upstream.
- */
-export function validateIncomingRequest(req: IncomingMessage): void {
+export function isRetryableMethod(method: string | undefined): boolean {
+  return SAFE_RETRY_METHODS.has((method ?? 'GET').toUpperCase());
+}
+
+export function validateIncomingRequest(
+  req: IncomingMessage,
+  maxBodyBytes?: number,
+): void {
   const method = (req.method ?? 'GET').toUpperCase();
   if (DISALLOWED_METHODS.has(method)) {
     throw new ProxyError(
@@ -44,7 +52,6 @@ export function validateIncomingRequest(req: IncomingMessage): void {
   }
 
   const url = req.url ?? '';
-  // Reject absolute-form (`http://...`), authority-form (`host:port`), or protocol-relative (`//...`) URLs
   if (!url.startsWith('/') || url.startsWith('//')) {
     throw new ProxyError(
       400,
@@ -53,7 +60,7 @@ export function validateIncomingRequest(req: IncomingMessage): void {
     );
   }
 
-  // Defense-in-depth against CL.TE / TE.CL HTTP Request Smuggling (RFC 9112 Section 6.3)
+  // RFC 9112 Section 6.3: reject conflicting Content-Length and Transfer-Encoding
   if (
     req.headers['transfer-encoding'] !== undefined &&
     req.headers['content-length'] !== undefined
@@ -64,12 +71,22 @@ export function validateIncomingRequest(req: IncomingMessage): void {
       'Conflicting Content-Length and Transfer-Encoding headers are not permitted',
     );
   }
+
+  if (maxBodyBytes !== undefined && req.headers['content-length'] !== undefined) {
+    const contentLength = Number(req.headers['content-length']);
+    if (!Number.isFinite(contentLength) || contentLength < 0) {
+      throw new ProxyError(400, 'BAD_REQUEST', 'Invalid Content-Length header');
+    }
+    if (contentLength > maxBodyBytes) {
+      throw new ProxyError(
+        413,
+        'PAYLOAD_TOO_LARGE',
+        `Request body exceeds maximum allowed size of ${maxBodyBytes} bytes`,
+      );
+    }
+  }
 }
 
-/**
- * Maps low-level Node.js / libuv socket and HTTP parser errors from an upstream
- * into appropriate HTTP 502 / 504 ProxyErrors.
- */
 export function classifyUpstreamError(err: unknown, upstreamId: string): ProxyError {
   if (err instanceof ProxyError) {
     return err;
@@ -119,20 +136,18 @@ export function classifyUpstreamError(err: unknown, upstreamId: string): ProxyEr
   );
 }
 
-/**
- * Safely writes an error response to the client if headers have not yet been sent.
- * If headers have already been flushed on the wire, destroys the socket immediately
- * so the client detects an abnormal termination rather than receiving corrupted payload bytes.
- */
 export function sendProxyError(
   res: ServerResponse,
   error: ProxyError,
   requestId: string,
+  closeConnection = false,
 ): void {
   if (res.destroyed || res.writableEnded) {
     return;
   }
 
+  // Once headers are flushed on the wire, we cannot send a new HTTP status line;
+  // destroy the socket so the client sees an abnormal termination instead of truncated data.
   if (res.headersSent) {
     res.destroy(error);
     return;
@@ -148,13 +163,18 @@ export function sendProxyError(
   });
 
   const bodyBuffer = Buffer.from(payload, 'utf8');
-
-  res.writeHead(error.statusCode, {
+  const headers: Record<string, string | number> = {
     'content-type': 'application/json; charset=utf-8',
     'content-length': bodyBuffer.byteLength,
     'cache-control': 'no-store',
     'x-request-id': requestId,
     via: '1.1 relay-edge',
-  });
+  };
+
+  if (closeConnection) {
+    headers['connection'] = 'close';
+  }
+
+  res.writeHead(error.statusCode, headers);
   res.end(bodyBuffer);
 }

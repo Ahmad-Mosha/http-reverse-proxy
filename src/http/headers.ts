@@ -1,10 +1,7 @@
 import type { IncomingHttpHeaders, OutgoingHttpHeaders } from 'node:http';
 import type { UpstreamTarget } from '../types/upstream.js';
 
-/**
- * Standard HTTP/1.1 hop-by-hop headers (RFC 9110 Section 7.6.1) that belong strictly
- * to a single TCP transport connection and must not be forwarded across proxy hops.
- */
+// RFC 9110 Section 7.6.1 hop-by-hop headers scoped strictly to a single TCP link
 const STATIC_HOP_BY_HOP_HEADERS = new Set<string>([
   'connection',
   'keep-alive',
@@ -17,11 +14,6 @@ const STATIC_HOP_BY_HOP_HEADERS = new Set<string>([
   'upgrade',
 ]);
 
-/**
- * Extracts header names dynamically nominated as hop-by-hop inside the `Connection` header.
- * Per RFC 9110 Section 7.6.1, any header field name listed in the Connection header
- * must be removed before forwarding the message.
- */
 export function parseConnectionHeaderTokens(
   connectionHeader: string | string[] | undefined,
 ): Set<string> {
@@ -47,17 +39,13 @@ export function parseConnectionHeaderTokens(
 }
 
 export interface BuildUpstreamRequestHeadersOptions {
-  readonly incomingHeaders: IncomingHttpHeaders;
-  readonly upstream: UpstreamTarget;
-  readonly clientIp: string;
-  readonly requestId: string;
-  readonly trustProxy: boolean;
+  incomingHeaders: IncomingHttpHeaders;
+  upstream: UpstreamTarget;
+  clientIp: string;
+  requestId: string;
+  trustProxy: boolean;
 }
 
-/**
- * Sanitizes incoming client headers and constructs safe end-to-end headers
- * for the outbound request to the selected upstream target.
- */
 export function buildUpstreamRequestHeaders(
   options: BuildUpstreamRequestHeadersOptions,
 ): OutgoingHttpHeaders {
@@ -76,15 +64,14 @@ export function buildUpstreamRequestHeaders(
     sanitized[key] = value;
   }
 
-  // Rewrite Host header to target upstream authority (RFC 9110 Section 7.2)
   const originalHost =
     typeof incomingHeaders.host === 'string' && incomingHeaders.host.trim().length > 0
       ? incomingHeaders.host.trim()
       : `${upstream.host}:${upstream.port}`;
   sanitized.host = `${upstream.host}:${upstream.port}`;
 
-  // Set forwarding & identity headers AFTER hop-by-hop stripping so a client cannot
-  // abuse `Connection: x-forwarded-for, x-request-id` to strip proxy-injected headers.
+  // Forwarding headers are set after hop-by-hop removal so a client cannot strip
+  // X-Forwarded-For or Host by nominating them inside `Connection: ...`
   if (
     trustProxy &&
     typeof incomingHeaders['x-forwarded-for'] === 'string' &&
@@ -127,12 +114,10 @@ export function buildUpstreamRequestHeaders(
   return sanitized;
 }
 
-/**
- * Sanitizes upstream response headers before sending them back to the downstream client.
- */
 export function buildClientResponseHeaders(
   upstreamHeaders: IncomingHttpHeaders,
   requestId: string,
+  draining = false,
 ): OutgoingHttpHeaders {
   const dynamicHopByHop = parseConnectionHeaderTokens(upstreamHeaders.connection);
   const sanitized: OutgoingHttpHeaders = {};
@@ -154,6 +139,10 @@ export function buildClientResponseHeaders(
       ? `${upstreamHeaders.via.trim()}, 1.1 relay-edge`
       : '1.1 relay-edge';
   sanitized.via = existingVia;
+
+  if (draining) {
+    sanitized.connection = 'close';
+  }
 
   return sanitized;
 }

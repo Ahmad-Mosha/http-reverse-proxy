@@ -1,4 +1,6 @@
 import type {
+  HealthCheckConfig,
+  LimitsConfig,
   LoadBalancingStrategy,
   PartialProxyConfig,
   PoolConfig,
@@ -9,7 +11,7 @@ import type {
 } from '../types/config.js';
 
 export class ConfigValidationError extends Error {
-  public constructor(message: string) {
+  constructor(message: string) {
     super(`Invalid RelayEdge configuration: ${message}`);
     this.name = 'ConfigValidationError';
   }
@@ -29,10 +31,27 @@ export const DEFAULT_TIMEOUT_CONFIG: TimeoutConfig = {
   clientHeadersTimeoutMs: 10_000,
   clientRequestTimeoutMs: 30_000,
   clientKeepAliveTimeoutMs: 5_000,
+  shutdownGracePeriodMs: 10_000,
 };
 
 export const DEFAULT_STREAM_CONFIG: StreamConfig = {
-  highWaterMarkBytes: 64 * 1024, // 64 KiB
+  highWaterMarkBytes: 64 * 1024,
+};
+
+export const DEFAULT_HEALTH_CHECK_CONFIG: HealthCheckConfig = {
+  enabled: false,
+  path: '/healthz',
+  intervalMs: 5_000,
+  timeoutMs: 2_000,
+  unhealthyThreshold: 3,
+  healthyThreshold: 2,
+};
+
+export const DEFAULT_LIMITS_CONFIG: LimitsConfig = {
+  maxActiveRequests: 2_048,
+  maxActiveRequestsPerUpstream: 512,
+  maxRequestBodyBytes: 10 * 1024 * 1024, // 10 MiB
+  maxRetries: 1,
 };
 
 const VALID_STRATEGIES = new Set<LoadBalancingStrategy>([
@@ -40,7 +59,7 @@ const VALID_STRATEGIES = new Set<LoadBalancingStrategy>([
   'least-connections',
 ]);
 
-function normalizeHostForComparison(host: string): string {
+function normalizeHost(host: string): string {
   const lower = host.trim().toLowerCase();
   if (lower === 'localhost' || lower === '0.0.0.0' || lower === '::1' || lower === '::') {
     return '127.0.0.1';
@@ -48,19 +67,27 @@ function normalizeHostForComparison(host: string): string {
   return lower;
 }
 
-function assertPositiveInteger(value: number, fieldName: string): void {
+function assertPositiveInt(value: number, field: string): void {
   if (!Number.isInteger(value) || value <= 0) {
     throw new ConfigValidationError(
-      `"${fieldName}" must be a positive integer, got ${value}`,
+      `"${field}" must be a positive integer, got ${value}`,
     );
   }
 }
 
-function validatePort(port: number, fieldName: string, allowZero: boolean): void {
+function assertNonNegativeInt(value: number, field: string): void {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new ConfigValidationError(
+      `"${field}" must be a non-negative integer, got ${value}`,
+    );
+  }
+}
+
+function validatePort(port: number, field: string, allowZero: boolean): void {
   const min = allowZero ? 0 : 1;
   if (!Number.isInteger(port) || port < min || port > 65535) {
     throw new ConfigValidationError(
-      `"${fieldName}" must be an integer between ${min} and 65535, got ${port}`,
+      `"${field}" must be an integer between ${min} and 65535, got ${port}`,
     );
   }
 }
@@ -87,9 +114,29 @@ export function createProxyConfig(input: PartialProxyConfig): ProxyConfig {
     );
   }
 
+  const healthCheck: HealthCheckConfig = {
+    enabled: input.healthCheck?.enabled ?? DEFAULT_HEALTH_CHECK_CONFIG.enabled,
+    path: (input.healthCheck?.path ?? DEFAULT_HEALTH_CHECK_CONFIG.path).trim(),
+    intervalMs: input.healthCheck?.intervalMs ?? DEFAULT_HEALTH_CHECK_CONFIG.intervalMs,
+    timeoutMs: input.healthCheck?.timeoutMs ?? DEFAULT_HEALTH_CHECK_CONFIG.timeoutMs,
+    unhealthyThreshold:
+      input.healthCheck?.unhealthyThreshold ??
+      DEFAULT_HEALTH_CHECK_CONFIG.unhealthyThreshold,
+    healthyThreshold:
+      input.healthCheck?.healthyThreshold ?? DEFAULT_HEALTH_CHECK_CONFIG.healthyThreshold,
+  };
+
+  if (!healthCheck.path.startsWith('/')) {
+    throw new ConfigValidationError('"healthCheck.path" must start with "/"');
+  }
+  assertPositiveInt(healthCheck.intervalMs, 'healthCheck.intervalMs');
+  assertPositiveInt(healthCheck.timeoutMs, 'healthCheck.timeoutMs');
+  assertPositiveInt(healthCheck.unhealthyThreshold, 'healthCheck.unhealthyThreshold');
+  assertPositiveInt(healthCheck.healthyThreshold, 'healthCheck.healthyThreshold');
+
   const seenIds = new Set<string>();
   const seenEndpoints = new Set<string>();
-  const normalizedProxyHost = normalizeHostForComparison(host);
+  const normalizedProxyHost = normalizeHost(host);
 
   const upstreams: UpstreamConfig[] = input.upstreams.map(
     (upstream: UpstreamConfig, index: number) => {
@@ -118,7 +165,14 @@ export function createProxyConfig(input: PartialProxyConfig): ProxyConfig {
         throw new ConfigValidationError(`upstreams[${index}].protocol must be "http:"`);
       }
 
-      const normalizedUpstreamHost = normalizeHostForComparison(upstreamHost);
+      const hcPath = (upstream.healthCheckPath ?? healthCheck.path).trim();
+      if (!hcPath.startsWith('/')) {
+        throw new ConfigValidationError(
+          `upstreams[${index}].healthCheckPath must start with "/"`,
+        );
+      }
+
+      const normalizedUpstreamHost = normalizeHost(upstreamHost);
       if (
         port > 0 &&
         normalizedUpstreamHost === normalizedProxyHost &&
@@ -142,6 +196,7 @@ export function createProxyConfig(input: PartialProxyConfig): ProxyConfig {
         host: upstreamHost,
         port: upstream.port,
         protocol: 'http:',
+        healthCheckPath: hcPath,
       };
     },
   );
@@ -157,16 +212,10 @@ export function createProxyConfig(input: PartialProxyConfig): ProxyConfig {
     scheduling: input.pool?.scheduling ?? DEFAULT_POOL_CONFIG.scheduling,
   };
 
-  assertPositiveInteger(pool.keepAliveMsecs, 'pool.keepAliveMsecs');
-  assertPositiveInteger(pool.maxSocketsPerUpstream, 'pool.maxSocketsPerUpstream');
-  if (
-    !Number.isInteger(pool.maxFreeSocketsPerUpstream) ||
-    pool.maxFreeSocketsPerUpstream < 0
-  ) {
-    throw new ConfigValidationError(
-      `"pool.maxFreeSocketsPerUpstream" must be a non-negative integer, got ${pool.maxFreeSocketsPerUpstream}`,
-    );
-  }
+  assertPositiveInt(pool.keepAliveMsecs, 'pool.keepAliveMsecs');
+  assertPositiveInt(pool.maxSocketsPerUpstream, 'pool.maxSocketsPerUpstream');
+  assertNonNegativeInt(pool.maxFreeSocketsPerUpstream, 'pool.maxFreeSocketsPerUpstream');
+
   const schedulingValue: string = pool.scheduling;
   if (schedulingValue !== 'lifo' && schedulingValue !== 'fifo') {
     throw new ConfigValidationError('"pool.scheduling" must be "lifo" or "fifo"');
@@ -188,34 +237,48 @@ export function createProxyConfig(input: PartialProxyConfig): ProxyConfig {
     clientKeepAliveTimeoutMs:
       input.timeouts?.clientKeepAliveTimeoutMs ??
       DEFAULT_TIMEOUT_CONFIG.clientKeepAliveTimeoutMs,
+    shutdownGracePeriodMs:
+      input.timeouts?.shutdownGracePeriodMs ??
+      DEFAULT_TIMEOUT_CONFIG.shutdownGracePeriodMs,
   };
 
-  assertPositiveInteger(
+  assertPositiveInt(
     timeouts.upstreamResponseTimeoutMs,
     'timeouts.upstreamResponseTimeoutMs',
   );
-  assertPositiveInteger(
-    timeouts.upstreamSocketTimeoutMs,
-    'timeouts.upstreamSocketTimeoutMs',
-  );
-  assertPositiveInteger(
-    timeouts.clientHeadersTimeoutMs,
-    'timeouts.clientHeadersTimeoutMs',
-  );
-  assertPositiveInteger(
-    timeouts.clientRequestTimeoutMs,
-    'timeouts.clientRequestTimeoutMs',
-  );
-  assertPositiveInteger(
+  assertPositiveInt(timeouts.upstreamSocketTimeoutMs, 'timeouts.upstreamSocketTimeoutMs');
+  assertPositiveInt(timeouts.clientHeadersTimeoutMs, 'timeouts.clientHeadersTimeoutMs');
+  assertPositiveInt(timeouts.clientRequestTimeoutMs, 'timeouts.clientRequestTimeoutMs');
+  assertPositiveInt(
     timeouts.clientKeepAliveTimeoutMs,
     'timeouts.clientKeepAliveTimeoutMs',
   );
+  assertPositiveInt(timeouts.shutdownGracePeriodMs, 'timeouts.shutdownGracePeriodMs');
 
   const stream: StreamConfig = {
     highWaterMarkBytes:
       input.stream?.highWaterMarkBytes ?? DEFAULT_STREAM_CONFIG.highWaterMarkBytes,
   };
-  assertPositiveInteger(stream.highWaterMarkBytes, 'stream.highWaterMarkBytes');
+  assertPositiveInt(stream.highWaterMarkBytes, 'stream.highWaterMarkBytes');
+
+  const limits: LimitsConfig = {
+    maxActiveRequests:
+      input.limits?.maxActiveRequests ?? DEFAULT_LIMITS_CONFIG.maxActiveRequests,
+    maxActiveRequestsPerUpstream:
+      input.limits?.maxActiveRequestsPerUpstream ??
+      DEFAULT_LIMITS_CONFIG.maxActiveRequestsPerUpstream,
+    maxRequestBodyBytes:
+      input.limits?.maxRequestBodyBytes ?? DEFAULT_LIMITS_CONFIG.maxRequestBodyBytes,
+    maxRetries: input.limits?.maxRetries ?? DEFAULT_LIMITS_CONFIG.maxRetries,
+  };
+
+  assertPositiveInt(limits.maxActiveRequests, 'limits.maxActiveRequests');
+  assertPositiveInt(
+    limits.maxActiveRequestsPerUpstream,
+    'limits.maxActiveRequestsPerUpstream',
+  );
+  assertPositiveInt(limits.maxRequestBodyBytes, 'limits.maxRequestBodyBytes');
+  assertNonNegativeInt(limits.maxRetries, 'limits.maxRetries');
 
   return {
     host,
@@ -225,6 +288,8 @@ export function createProxyConfig(input: PartialProxyConfig): ProxyConfig {
     pool,
     timeouts,
     stream,
+    healthCheck,
+    limits,
     trustProxy: input.trustProxy ?? false,
   };
 }
