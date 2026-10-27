@@ -17,6 +17,9 @@
     "test": "node --import tsx --test \"tests/**/*.test.ts\"",
     "test:unit": "node --import tsx --test \"tests/unit/**/*.test.ts\"",
     "test:integration": "node --import tsx --test \"tests/integration/**/*.test.ts\"",
+    "exp:event-loop": "node --import tsx src/experiments/exp1-event-loop-blocking.ts",
+    "exp:backpressure": "node --import tsx src/experiments/exp2-streaming-vs-buffering.ts",
+    "exp:keepalive": "node --import tsx src/experiments/exp3-keepalive-vs-ephemeral.ts",
     "start": "node --import tsx src/index.ts",
     "demo": "node --import tsx src/demo/cluster.ts"
   },

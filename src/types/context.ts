@@ -1,3 +1,5 @@
+import type { ProxyErrorCode } from '../http/errors.js';
+
 export interface RequestContext {
   requestId: string;
   method: string;
@@ -7,4 +9,6 @@ export interface RequestContext {
   attempts: number;
   upstreamId?: string;
   statusCode?: number;
+  upstreamLatencyMs?: number;
+  errorCode?: ProxyErrorCode;
 }

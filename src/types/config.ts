@@ -1,3 +1,5 @@
+import type { LogLevel } from '../observability/logger.js';
+
 export type LoadBalancingStrategy = 'round-robin' | 'least-connections';
 
 export interface UpstreamConfig {
@@ -45,6 +47,12 @@ export interface LimitsConfig {
   maxRetries: number;
 }
 
+export interface ObservabilityConfig {
+  metricsPath: string;
+  healthPath: string;
+  logLevel: LogLevel;
+}
+
 export interface ProxyConfig {
   host: string;
   port: number;
@@ -55,6 +63,7 @@ export interface ProxyConfig {
   stream: StreamConfig;
   healthCheck: HealthCheckConfig;
   limits: LimitsConfig;
+  observability: ObservabilityConfig;
   trustProxy: boolean;
 }
 
@@ -68,5 +77,6 @@ export interface PartialProxyConfig {
   stream?: Partial<StreamConfig>;
   healthCheck?: Partial<HealthCheckConfig>;
   limits?: Partial<LimitsConfig>;
+  observability?: Partial<ObservabilityConfig>;
   trustProxy?: boolean;
 }

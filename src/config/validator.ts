@@ -1,7 +1,9 @@
+import type { LogLevel } from '../observability/logger.js';
 import type {
   HealthCheckConfig,
   LimitsConfig,
   LoadBalancingStrategy,
+  ObservabilityConfig,
   PartialProxyConfig,
   PoolConfig,
   ProxyConfig,
@@ -50,14 +52,22 @@ export const DEFAULT_HEALTH_CHECK_CONFIG: HealthCheckConfig = {
 export const DEFAULT_LIMITS_CONFIG: LimitsConfig = {
   maxActiveRequests: 2_048,
   maxActiveRequestsPerUpstream: 512,
-  maxRequestBodyBytes: 10 * 1024 * 1024, // 10 MiB
+  maxRequestBodyBytes: 10 * 1024 * 1024,
   maxRetries: 1,
+};
+
+export const DEFAULT_OBSERVABILITY_CONFIG: ObservabilityConfig = {
+  metricsPath: '/__relay_edge/metrics',
+  healthPath: '/__relay_edge/healthz',
+  logLevel: 'silent',
 };
 
 const VALID_STRATEGIES = new Set<LoadBalancingStrategy>([
   'round-robin',
   'least-connections',
 ]);
+
+const VALID_LOG_LEVELS = new Set<LogLevel>(['debug', 'info', 'warn', 'error', 'silent']);
 
 function normalizeHost(host: string): string {
   const lower = host.trim().toLowerCase();
@@ -280,6 +290,28 @@ export function createProxyConfig(input: PartialProxyConfig): ProxyConfig {
   assertPositiveInt(limits.maxRequestBodyBytes, 'limits.maxRequestBodyBytes');
   assertNonNegativeInt(limits.maxRetries, 'limits.maxRetries');
 
+  const observability: ObservabilityConfig = {
+    metricsPath: (
+      input.observability?.metricsPath ?? DEFAULT_OBSERVABILITY_CONFIG.metricsPath
+    ).trim(),
+    healthPath: (
+      input.observability?.healthPath ?? DEFAULT_OBSERVABILITY_CONFIG.healthPath
+    ).trim(),
+    logLevel: input.observability?.logLevel ?? DEFAULT_OBSERVABILITY_CONFIG.logLevel,
+  };
+
+  if (!observability.metricsPath.startsWith('/')) {
+    throw new ConfigValidationError('"observability.metricsPath" must start with "/"');
+  }
+  if (!observability.healthPath.startsWith('/')) {
+    throw new ConfigValidationError('"observability.healthPath" must start with "/"');
+  }
+  if (!VALID_LOG_LEVELS.has(observability.logLevel)) {
+    throw new ConfigValidationError(
+      `Invalid observability.logLevel "${observability.logLevel}"`,
+    );
+  }
+
   return {
     host,
     port,
@@ -290,6 +322,7 @@ export function createProxyConfig(input: PartialProxyConfig): ProxyConfig {
     stream,
     healthCheck,
     limits,
+    observability,
     trustProxy: input.trustProxy ?? false,
   };
 }
