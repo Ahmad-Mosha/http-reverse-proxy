@@ -1,0 +1,44 @@
+{
+  "name": "relay-edge",
+  "version": "0.1.0",
+  "description": "High-performance, backpressure-aware HTTP/1.1 reverse proxy and load balancer built with Node.js core primitives and TypeScript.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "test": "node --import tsx --test \"tests/**/*.test.ts\"",
+    "test:unit": "node --import tsx --test \"tests/unit/**/*.test.ts\"",
+    "test:integration": "node --import tsx --test \"tests/integration/**/*.test.ts\"",
+    "start": "node --import tsx src/index.ts",
+    "demo": "node --import tsx src/demo/cluster.ts"
+  },
+  "keywords": [
+    "reverse-proxy",
+    "load-balancer",
+    "http",
+    "nodejs-internals",
+    "streams",
+    "backpressure",
+    "typescript"
+  ],
+  "author": "Ahmed Gamal",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "@eslint/js": "^9.21.0",
+    "@types/node": "^22.13.9",
+    "eslint": "^9.21.0",
+    "prettier": "^3.5.3",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.26.0"
+  }
+}
