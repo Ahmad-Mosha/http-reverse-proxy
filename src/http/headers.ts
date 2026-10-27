@@ -14,14 +14,25 @@ const STATIC_HOP_BY_HOP_HEADERS = new Set<string>([
   'upgrade',
 ]);
 
+const EMPTY_TOKEN_SET: ReadonlySet<string> = new Set<string>();
+
 export function parseConnectionHeaderTokens(
   connectionHeader: string | string[] | undefined,
-): Set<string> {
-  const tokens = new Set<string>();
+): ReadonlySet<string> {
   if (connectionHeader === undefined) {
-    return tokens;
+    return EMPTY_TOKEN_SET;
   }
 
+  // Fast path: standard single-token Connection values need no dynamic Set allocation
+  if (typeof connectionHeader === 'string' && !connectionHeader.includes(',')) {
+    const single = connectionHeader.trim().toLowerCase();
+    if (single.length === 0 || single === 'keep-alive' || single === 'close') {
+      return EMPTY_TOKEN_SET;
+    }
+    return new Set([single]);
+  }
+
+  const tokens = new Set<string>();
   const rawValues = Array.isArray(connectionHeader)
     ? connectionHeader
     : [connectionHeader];
@@ -64,11 +75,12 @@ export function buildUpstreamRequestHeaders(
     sanitized[key] = value;
   }
 
+  const upstreamAuthority = `${upstream.host}:${upstream.port}`;
   const originalHost =
     typeof incomingHeaders.host === 'string' && incomingHeaders.host.trim().length > 0
       ? incomingHeaders.host.trim()
-      : `${upstream.host}:${upstream.port}`;
-  sanitized.host = `${upstream.host}:${upstream.port}`;
+      : upstreamAuthority;
+  sanitized.host = upstreamAuthority;
 
   // Forwarding headers are set after hop-by-hop removal so a client cannot strip
   // X-Forwarded-For or Host by nominating them inside `Connection: ...`
