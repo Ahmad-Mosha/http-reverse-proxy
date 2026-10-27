@@ -20,39 +20,7 @@ It is designed to demonstrate how Node.js operates beneath application framework
 
 ---
 
-## Architecture
-
-```mermaid
-flowchart LR
-    Client["Downstream Client\n(TCP Socket)"]
-    subgraph RelayEdge["RelayEdge Process (Single Event Loop / libuv)"]
-        Server["ProxyServer\n(http.Server + Concurrency Gate)"]
-        Sanitizer["Request & Header Validator\n(RFC 9110 / RFC 9112)"]
-        LB["LoadBalancer\n(Round-Robin / Least-Connections)"]
-        Pool["UpstreamPool\n(Per-Upstream http.Agent + Health State)"]
-        Forwarder["Stream Forwarder\n(req.pipe + stream.pipeline)"]
-        HC["HealthChecker\n(Periodic HTTP Probes)"]
-        Metrics["MetricsCollector\n(Event Loop + RingBuffer)"]
-    end
-    U1["Upstream 1\n(Keep-Alive Pool)"]
-    U2["Upstream 2\n(Keep-Alive Pool)"]
-    U3["Upstream 3\n(Keep-Alive Pool)"]
-
-    Client <-->|"HTTP/1.1 Stream\n(Backpressure-Aware)"| Server
-    Server --> Sanitizer
-    Sanitizer --> LB
-    LB --> Pool
-    Pool --> Forwarder
-    HC -.->|"GET /healthz"| U1
-    HC -.->|"GET /healthz"| U2
-    HC -.->|"GET /healthz"| U3
-    Server -.-> Metrics
-    Forwarder <-->|"Pooled TCP Sockets (LIFO)"| U1
-    Forwarder <-->|"Pooled TCP Sockets (LIFO)"| U2
-    Forwarder <-->|"Pooled TCP Sockets (LIFO)"| U3
-```
-
-### Module Layout
+## Architecture & Module Layout
 
 ```text
 src/
@@ -78,31 +46,14 @@ src/
 
 ---
 
-## Request Lifecycle & Backpressure Propagation
+## Request Lifecycle & Backpressure Flow
 
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant P as RelayEdge
-    participant U as Upstream Server
-
-    C->>P: HTTP Request Headers + Stream Chunks
-    Note over P: 1. Validate method, origin-form URL & Content-Length<br/>2. Select healthy upstream with available capacity<br/>3. Sanitize hop-by-hop & Connection-nominated headers
-    P->>U: http.request (reusing warm Keep-Alive socket)
-    C->>P: Request Body Chunks (req.pipe(upstreamReq))
-    U-->>P: HTTP Response Headers
-    P-->>C: res.writeHead() + Sanitized Headers
-    loop Streaming Response Body (pipeline(upstreamRes, res))
-        U->>P: 64 KiB Chunk
-        P->>C: res.write(chunk)
-        alt Slow Client (Socket Send Buffer Full -> res.write() returns false)
-            P->>P: upstreamRes.pause() (uv_read_stop)
-            Note over P,U: Kernel TCP Receive Buffer fills -> TCP ZeroWindow sent to Upstream
-            C-->>P: Client reads data (Socket Send Buffer drains -> 'drain' event)
-            P->>P: upstreamRes.resume() (uv_read_start)
-        end
-    end
-```
+1. **Ingress & Validation**: `ProxyServer` accepts the client request, checks global concurrency (`maxActiveRequests`), validates the HTTP method and origin-form path, and checks `Content-Length` against `maxRequestBodyBytes`.
+2. **Upstream Selection**: `LoadBalancer` picks a healthy upstream from `UpstreamPool` that is below `maxActiveRequestsPerUpstream` using either `round-robin` or `least-connections`.
+3. **Header Sanitization**: `buildUpstreamRequestHeaders` removes static and `Connection`-nominated hop-by-hop headers, rewrites `Host` to the upstream target, and sets `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Request-Id`, and `Via`.
+4. **Outbound Request Streaming**: `forwardRequest` dispatches `http.request` using the upstream's Keep-Alive `http.Agent` and streams the client request body via `req.pipe(upstreamReq)`.
+5. **Response Streaming & Backpressure**: Once upstream headers arrive, sanitized headers are written to the client (`res.writeHead`) and the body is streamed via `stream.pipeline(upstreamRes, res)`. If a slow client causes `res.write(chunk)` to exceed `highWaterMark`, `upstreamRes` pauses reading from the upstream socket (`uv_read_stop`), propagating TCP flow control back to the upstream server until the client socket emits `'drain'`.
+6. **Fault Handling & Cancellation**: If the client disconnects prematurely, `upstreamReq.destroy()` is triggered immediately. If an upstream connection fails before sending response headers on a `GET`/`HEAD`/`OPTIONS` request, RelayEdge retries on another healthy upstream.
 
 ---
 
@@ -288,9 +239,3 @@ RelayEdge is a focused systems engineering project and is **not** a drop-in repl
 - TLS termination and upstream mTLS via `node:tls`.
 - WebSocket / HTTP `101 Switching Protocols` bidirectional socket splicing (`req.on('upgrade')`).
 - Multi-worker scaling via `node:cluster` with aggregated shared-memory (`SharedArrayBuffer`) metrics.
-
----
-
-## License
-
-MIT
