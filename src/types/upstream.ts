@@ -1,23 +1,27 @@
 import type { Agent } from 'node:http';
 
 export interface UpstreamTarget {
-  readonly id: string;
-  readonly host: string;
-  readonly port: number;
-  readonly protocol: 'http:';
+  id: string;
+  host: string;
+  port: number;
+  protocol: 'http:';
+  healthCheckPath: string;
   healthy: boolean;
   activeConnections: number;
+  consecutiveFailures: number;
+  consecutiveSuccesses: number;
   totalRequests: number;
   totalErrors: number;
-  readonly agent: Agent;
+  agent: Agent;
 }
 
 export interface UpstreamSnapshot {
-  readonly id: string;
-  readonly host: string;
-  readonly port: number;
-  readonly healthy: boolean;
-  readonly activeConnections: number;
-  readonly totalRequests: number;
-  readonly totalErrors: number;
+  id: string;
+  host: string;
+  port: number;
+  healthy: boolean;
+  activeConnections: number;
+  consecutiveFailures: number;
+  totalRequests: number;
+  totalErrors: number;
 }

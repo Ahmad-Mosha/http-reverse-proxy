@@ -6,26 +6,29 @@ import type { UpstreamPool } from './upstream-pool.js';
 export class LoadBalancer {
   private readonly pool: UpstreamPool;
   private readonly strategy: LoadBalancingStrategy;
+  private readonly maxPerUpstream: number;
   private cursor = 0;
 
-  public constructor(pool: UpstreamPool, strategy: LoadBalancingStrategy) {
+  constructor(
+    pool: UpstreamPool,
+    strategy: LoadBalancingStrategy,
+    maxPerUpstream = Number.MAX_SAFE_INTEGER,
+  ) {
     this.pool = pool;
     this.strategy = strategy;
+    this.maxPerUpstream = maxPerUpstream;
   }
 
-  public getStrategy(): LoadBalancingStrategy {
+  getStrategy(): LoadBalancingStrategy {
     return this.strategy;
   }
 
-  /**
-   * Selects the next healthy upstream target according to the configured strategy.
-   * Throws a 503 NO_HEALTHY_UPSTREAM ProxyError if all upstreams are unhealthy.
-   */
-  public selectUpstream(): UpstreamTarget {
-    const healthy = this.pool.getHealthyUpstreams();
-    const count = healthy.length;
+  selectUpstream(excludedIds?: ReadonlySet<string>): UpstreamTarget {
+    const healthy = this.pool
+      .getHealthyUpstreams()
+      .filter((t) => excludedIds === undefined || !excludedIds.has(t.id));
 
-    if (count === 0) {
+    if (healthy.length === 0) {
       throw new ProxyError(
         503,
         'NO_HEALTHY_UPSTREAM',
@@ -33,11 +36,22 @@ export class LoadBalancer {
       );
     }
 
+    const available = healthy.filter((t) => t.activeConnections < this.maxPerUpstream);
+    const count = available.length;
+
+    if (count === 0) {
+      throw new ProxyError(
+        503,
+        'UPSTREAM_CAPACITY_EXCEEDED',
+        'All healthy upstreams have reached maximum concurrent connection capacity',
+      );
+    }
+
     const startOffset = this.cursor;
     this.cursor = (this.cursor + 1) >>> 0;
 
     if (this.strategy === 'round-robin') {
-      const selected = healthy[startOffset % count];
+      const selected = available[startOffset % count];
       if (selected === undefined) {
         throw new ProxyError(
           503,
@@ -48,8 +62,7 @@ export class LoadBalancer {
       return selected;
     }
 
-    // Least Connections with Round-Robin tie-breaking via rotating startOffset
-    let bestTarget = healthy[startOffset % count];
+    let bestTarget = available[startOffset % count];
     if (bestTarget === undefined) {
       throw new ProxyError(
         503,
@@ -59,7 +72,7 @@ export class LoadBalancer {
     }
 
     for (let i = 1; i < count; i += 1) {
-      const candidate = healthy[(startOffset + i) % count];
+      const candidate = available[(startOffset + i) % count];
       if (
         candidate !== undefined &&
         candidate.activeConnections < bestTarget.activeConnections

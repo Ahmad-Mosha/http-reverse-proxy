@@ -4,6 +4,8 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { performance } from 'node:perf_hooks';
 import { createProxyConfig } from '../config/validator.js';
+import { ProxyError, sendProxyError } from '../http/errors.js';
+import { HealthChecker } from '../pool/health-checker.js';
 import { LoadBalancer } from '../pool/load-balancer.js';
 import { UpstreamPool } from '../pool/upstream-pool.js';
 import type { PartialProxyConfig, ProxyConfig } from '../types/config.js';
@@ -15,21 +17,31 @@ export class ProxyServer {
   private readonly config: ProxyConfig;
   private readonly pool: UpstreamPool;
   private readonly loadBalancer: LoadBalancer;
+  private readonly healthChecker: HealthChecker;
   private readonly server: Server;
   private readonly backpressureMetrics: BackpressureMetrics = {
     clientPauseCount: 0,
     upstreamPauseCount: 0,
   };
   private boundPort: number | null = null;
+  private activeRequests = 0;
+  private draining = false;
+  private closingPromise: Promise<void> | null = null;
 
-  public constructor(inputConfig: PartialProxyConfig) {
+  constructor(inputConfig: PartialProxyConfig) {
     this.config = createProxyConfig(inputConfig);
     this.pool = new UpstreamPool(
       this.config.upstreams,
       this.config.pool,
       this.config.timeouts,
+      this.config.healthCheck,
     );
-    this.loadBalancer = new LoadBalancer(this.pool, this.config.strategy);
+    this.loadBalancer = new LoadBalancer(
+      this.pool,
+      this.config.strategy,
+      this.config.limits.maxActiveRequestsPerUpstream,
+    );
+    this.healthChecker = new HealthChecker(this.pool, this.config.healthCheck);
 
     this.server = createServer(
       {
@@ -65,12 +77,53 @@ export class ProxyServer {
         ? incomingReqId.trim()
         : randomUUID();
 
+    if (this.draining) {
+      req.resume();
+      res.shouldKeepAlive = false;
+      sendProxyError(
+        res,
+        new ProxyError(
+          503,
+          'SERVER_SHUTTING_DOWN',
+          'Proxy server is shutting down and not accepting new requests',
+        ),
+        requestId,
+        true,
+      );
+      return;
+    }
+
+    if (this.activeRequests >= this.config.limits.maxActiveRequests) {
+      req.resume();
+      sendProxyError(
+        res,
+        new ProxyError(
+          503,
+          'OVERLOADED',
+          `Maximum concurrent proxy requests (${this.config.limits.maxActiveRequests}) reached`,
+        ),
+        requestId,
+      );
+      return;
+    }
+
+    this.activeRequests += 1;
+    let decremented = false;
+    const onComplete = (): void => {
+      if (!decremented) {
+        decremented = true;
+        this.activeRequests -= 1;
+      }
+    };
+    res.on('close', onComplete);
+
     const ctx: RequestContext = {
       requestId,
       method: req.method ?? 'GET',
       url: req.url ?? '/',
       clientIp: req.socket.remoteAddress ?? '127.0.0.1',
       startTimeMs: performance.now(),
+      attempts: 0,
     };
 
     forwardRequest(
@@ -81,12 +134,13 @@ export class ProxyServer {
         config: this.config,
         pool: this.pool,
         loadBalancer: this.loadBalancer,
+        isDraining: () => this.draining,
       },
       this.backpressureMetrics,
     );
   }
 
-  public async listen(): Promise<{ host: string; port: number }> {
+  async listen(): Promise<{ host: string; port: number }> {
     return new Promise((resolve, reject) => {
       const onError = (err: Error): void => {
         this.server.removeListener('listening', onListening);
@@ -95,6 +149,8 @@ export class ProxyServer {
 
       const onListening = (): void => {
         this.server.removeListener('error', onError);
+        this.draining = false;
+        this.healthChecker.start();
         const addr = this.server.address();
         if (addr !== null && typeof addr === 'object') {
           this.boundPort = addr.port;
@@ -111,38 +167,70 @@ export class ProxyServer {
     });
   }
 
-  public async close(): Promise<void> {
-    this.pool.destroy();
+  async close(): Promise<void> {
+    if (this.closingPromise !== null) {
+      return this.closingPromise;
+    }
+
+    this.draining = true;
+    this.healthChecker.stop();
+
     if (!this.server.listening) {
+      this.pool.destroy();
       this.boundPort = null;
       return;
     }
 
-    return new Promise((resolve, reject) => {
+    this.closingPromise = new Promise<void>((resolve, reject) => {
+      const forceTimer = setTimeout(() => {
+        this.server.closeAllConnections();
+        this.pool.destroy();
+      }, this.config.timeouts.shutdownGracePeriodMs);
+      forceTimer.unref();
+
       this.server.close((err) => {
+        clearTimeout(forceTimer);
+        this.pool.destroy();
         this.boundPort = null;
+        this.closingPromise = null;
         if (err !== undefined) {
           reject(err);
           return;
         }
         resolve();
       });
+
+      this.server.closeIdleConnections();
     });
+
+    return this.closingPromise;
   }
 
-  public getConfig(): ProxyConfig {
+  async runHealthCheckCycle(): Promise<void> {
+    await this.healthChecker.runProbeCycle();
+  }
+
+  getConfig(): ProxyConfig {
     return this.config;
   }
 
-  public getPool(): UpstreamPool {
+  getPool(): UpstreamPool {
     return this.pool;
   }
 
-  public getBackpressureMetrics(): Readonly<BackpressureMetrics> {
+  getActiveRequests(): number {
+    return this.activeRequests;
+  }
+
+  isDraining(): boolean {
+    return this.draining;
+  }
+
+  getBackpressureMetrics(): Readonly<BackpressureMetrics> {
     return this.backpressureMetrics;
   }
 
-  public getPort(): number | null {
+  getPort(): number | null {
     return this.boundPort;
   }
 }
