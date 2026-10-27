@@ -1,5 +1,6 @@
 import { request as httpRequest } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { performance } from 'node:perf_hooks';
 import { pipeline } from 'node:stream';
 import {
   classifyUpstreamError,
@@ -46,6 +47,7 @@ export function forwardRequest(
         ? err
         : new ProxyError(400, 'BAD_REQUEST', 'Invalid HTTP request');
     ctx.statusCode = proxyErr.statusCode;
+    ctx.errorCode = proxyErr.code;
     req.resume();
     sendProxyError(res, proxyErr, ctx.requestId, proxyErr.statusCode === 413);
     return;
@@ -66,11 +68,13 @@ export function forwardRequest(
           ? err
           : new ProxyError(503, 'NO_HEALTHY_UPSTREAM', 'No healthy upstreams');
       ctx.statusCode = proxyErr.statusCode;
+      ctx.errorCode = proxyErr.code;
       req.resume();
       sendProxyError(res, proxyErr, ctx.requestId);
       return;
     }
 
+    const attemptStartMs = performance.now();
     ctx.attempts += 1;
     ctx.upstreamId = upstream.id;
     attemptedUpstreams.add(upstream.id);
@@ -128,14 +132,13 @@ export function forwardRequest(
       if (err instanceof ProxyError && err.code === 'PAYLOAD_TOO_LARGE') {
         req.resume();
         ctx.statusCode = err.statusCode;
+        ctx.errorCode = err.code;
         sendProxyError(res, err, ctx.requestId, true);
         return;
       }
 
       pool.recordError(upstream);
 
-      // Safe retry: only for idempotent bodyless methods (GET/HEAD/OPTIONS) when failure
-      // happened before any response headers were received from the upstream.
       if (
         canRetry &&
         !responseReceived &&
@@ -149,6 +152,7 @@ export function forwardRequest(
       req.resume();
       const proxyErr = classifyUpstreamError(err, upstream.id);
       ctx.statusCode = proxyErr.statusCode;
+      ctx.errorCode = proxyErr.code;
       sendProxyError(res, proxyErr, ctx.requestId);
     };
 
@@ -222,6 +226,8 @@ export function forwardRequest(
 
     upstreamReq.on('response', (upstreamRes: IncomingMessage) => {
       responseReceived = true;
+      ctx.upstreamLatencyMs =
+        Math.round((performance.now() - attemptStartMs) * 100) / 100;
       clearResponseTimeout();
 
       if (clientAborted || res.destroyed) {
@@ -273,8 +279,6 @@ export function forwardRequest(
       });
     });
 
-    // For GET/HEAD/OPTIONS there is no body to stream; calling end() directly
-    // allows safe retries if the first upstream refuses the connection.
     if (canRetry) {
       req.resume();
       upstreamReq.end();
