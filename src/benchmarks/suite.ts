@@ -234,7 +234,7 @@ export async function runBenchmarkSuite(): Promise<BenchmarkReport> {
 
   results.push(
     await runProxyBenchmarkCase({
-      name: 'relay-edge-1-upstream-1kib',
+      name: 'proxy-1-upstream-1kib',
       upstreamCount: 1,
       strategy: 'round-robin',
       payloadBytes: 1024,
@@ -246,7 +246,7 @@ export async function runBenchmarkSuite(): Promise<BenchmarkReport> {
 
   results.push(
     await runProxyBenchmarkCase({
-      name: 'relay-edge-3-upstreams-rr-1kib',
+      name: 'proxy-3-upstreams-rr-1kib',
       upstreamCount: 3,
       strategy: 'round-robin',
       payloadBytes: 1024,
@@ -258,7 +258,7 @@ export async function runBenchmarkSuite(): Promise<BenchmarkReport> {
 
   results.push(
     await runProxyBenchmarkCase({
-      name: 'relay-edge-3-upstreams-lc-1kib',
+      name: 'proxy-3-upstreams-lc-1kib',
       upstreamCount: 3,
       strategy: 'least-connections',
       payloadBytes: 1024,
@@ -270,7 +270,7 @@ export async function runBenchmarkSuite(): Promise<BenchmarkReport> {
 
   results.push(
     await runProxyBenchmarkCase({
-      name: 'relay-edge-streaming-256kib',
+      name: 'proxy-streaming-256kib',
       upstreamCount: 2,
       strategy: 'round-robin',
       payloadBytes: 256 * 1024,
@@ -285,7 +285,7 @@ export async function runBenchmarkSuite(): Promise<BenchmarkReport> {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   void runBenchmarkSuite().then((report) => {
-    process.stdout.write('\n=== RelayEdge Benchmark Suite ===\n');
+    process.stdout.write('\n=== Proxy Benchmark Suite ===\n');
     process.stdout.write(
       `Environment: Node ${report.environment.nodeVersion} | ${report.environment.cpuModel} (${report.environment.cpuCores} cores, ${report.environment.totalMemoryGiB} GiB RAM) | ${report.environment.platform}/${report.environment.arch}\n\n`,
     );

@@ -1,4 +1,4 @@
-# RelayEdge
+# HTTP Reverse Proxy
 
 [![CI](https://github.com/Ahmad-Mosha/http-reverse-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/Ahmad-Mosha/http-reverse-proxy/actions/workflows/ci.yml)
 
@@ -38,9 +38,9 @@ It is a learning project, not a replacement for nginx or HAProxy.
 - **Clear errors:** `400`, `405`, `413`, `502`, `503` and `504`.
 - **Graceful shutdown.** Stops accepting connections, closes idle keep-alive
   sockets, lets in-flight requests finish, and gives up after a deadline.
-- **Metrics** at `/__relay_edge/metrics`: latency percentiles, event loop delay
+- **Metrics** at `/__proxy/metrics`: latency percentiles, event loop delay
   and utilization, memory, and backpressure events. Health at
-  `/__relay_edge/healthz`. Logs are JSON lines.
+  `/__proxy/healthz`. Logs are JSON lines.
 
 ## How a request flows
 
@@ -88,7 +88,7 @@ terminal:
 
 ```bash
 curl -i http://127.0.0.1:8080/api/orders     # run it a few times to see round-robin
-curl -s http://127.0.0.1:8080/__relay_edge/metrics
+curl -s http://127.0.0.1:8080/__proxy/metrics
 ```
 
 Tests, experiments and the benchmark:

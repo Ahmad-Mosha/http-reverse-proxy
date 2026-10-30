@@ -1,5 +1,5 @@
 {
-  "name": "relay-edge",
+  "name": "http-reverse-proxy",
   "version": "0.1.0",
   "description": "High-performance, backpressure-aware HTTP/1.1 reverse proxy and load balancer built with Node.js core primitives and TypeScript.",
   "type": "module",

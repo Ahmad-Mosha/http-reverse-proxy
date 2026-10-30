@@ -42,7 +42,7 @@ describe('HTTP/1.1 Header Sanitization & Forwarding Semantics', () => {
       const headers = buildUpstreamRequestHeaders({
         incomingHeaders: {
           host: 'api.example.com',
-          'user-agent': 'RelayEdgeTest/1.0',
+          'user-agent': 'ProxyTest/1.0',
           accept: 'application/json',
           connection: 'keep-alive, x-internal-auth',
           'keep-alive': 'timeout=5',
@@ -58,7 +58,7 @@ describe('HTTP/1.1 Header Sanitization & Forwarding Semantics', () => {
       });
 
       assert.equal(headers.host, '10.0.0.12:4000');
-      assert.equal(headers['user-agent'], 'RelayEdgeTest/1.0');
+      assert.equal(headers['user-agent'], 'ProxyTest/1.0');
       assert.equal(headers.accept, 'application/json');
       assert.equal(headers.connection, undefined);
       assert.equal(headers['keep-alive'], undefined);
@@ -70,7 +70,7 @@ describe('HTTP/1.1 Header Sanitization & Forwarding Semantics', () => {
       assert.equal(headers['x-forwarded-host'], 'api.example.com');
       assert.equal(headers['x-forwarded-proto'], 'http');
       assert.equal(headers['x-request-id'], 'req-123');
-      assert.equal(headers.via, '1.1 relay-edge');
+      assert.equal(headers.via, '1.1 http-reverse-proxy');
     } finally {
       upstream.agent.destroy();
     }
@@ -94,7 +94,7 @@ describe('HTTP/1.1 Header Sanitization & Forwarding Semantics', () => {
       assert.equal(headers.host, '10.0.0.12:4000');
       assert.equal(headers['x-forwarded-for'], '203.0.113.9');
       assert.equal(headers['x-request-id'], 'req-sec-1');
-      assert.equal(headers.via, '1.1 relay-edge');
+      assert.equal(headers.via, '1.1 http-reverse-proxy');
     } finally {
       upstream.agent.destroy();
     }
@@ -138,6 +138,6 @@ describe('HTTP/1.1 Header Sanitization & Forwarding Semantics', () => {
     assert.equal(resHeaders['keep-alive'], undefined);
     assert.equal(resHeaders['x-upstream-private'], undefined);
     assert.equal(resHeaders['x-request-id'], 'req-res-1');
-    assert.equal(resHeaders.via, '1.1 relay-edge');
+    assert.equal(resHeaders.via, '1.1 http-reverse-proxy');
   });
 });

@@ -168,7 +168,7 @@ export function sendProxyError(
     'content-length': bodyBuffer.byteLength,
     'cache-control': 'no-store',
     'x-request-id': requestId,
-    via: '1.1 relay-edge',
+    via: '1.1 http-reverse-proxy',
   };
 
   if (closeConnection) {

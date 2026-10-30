@@ -119,8 +119,8 @@ export function buildUpstreamRequestHeaders(
 
   const existingVia =
     typeof incomingHeaders.via === 'string' && incomingHeaders.via.trim().length > 0
-      ? `${incomingHeaders.via.trim()}, 1.1 relay-edge`
-      : '1.1 relay-edge';
+      ? `${incomingHeaders.via.trim()}, 1.1 http-reverse-proxy`
+      : '1.1 http-reverse-proxy';
   sanitized.via = existingVia;
 
   return sanitized;
@@ -148,8 +148,8 @@ export function buildClientResponseHeaders(
   sanitized['x-request-id'] = requestId;
   const existingVia =
     typeof upstreamHeaders.via === 'string' && upstreamHeaders.via.trim().length > 0
-      ? `${upstreamHeaders.via.trim()}, 1.1 relay-edge`
-      : '1.1 relay-edge';
+      ? `${upstreamHeaders.via.trim()}, 1.1 http-reverse-proxy`
+      : '1.1 http-reverse-proxy';
   sanitized.via = existingVia;
 
   if (draining) {

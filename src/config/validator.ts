@@ -14,7 +14,7 @@ import type {
 
 export class ConfigValidationError extends Error {
   constructor(message: string) {
-    super(`Invalid RelayEdge configuration: ${message}`);
+    super(`Invalid proxy configuration: ${message}`);
     this.name = 'ConfigValidationError';
   }
 }
@@ -57,8 +57,8 @@ export const DEFAULT_LIMITS_CONFIG: LimitsConfig = {
 };
 
 export const DEFAULT_OBSERVABILITY_CONFIG: ObservabilityConfig = {
-  metricsPath: '/__relay_edge/metrics',
-  healthPath: '/__relay_edge/healthz',
+  metricsPath: '/__proxy/metrics',
+  healthPath: '/__proxy/healthz',
   logLevel: 'silent',
 };
 

@@ -160,7 +160,7 @@ describe('Phase 1 Integration — Core HTTP Reverse Proxy & Load Balancer', () =
 
     assert.equal(postRes.statusCode, 201);
     assert.equal(postRes.headers['x-upstream-id'], 'u1');
-    assert.equal(postRes.headers.via, '1.1 relay-edge');
+    assert.equal(postRes.headers.via, '1.1 http-reverse-proxy');
     assert.ok(typeof postRes.headers['x-request-id'] === 'string');
 
     const parsed = JSON.parse(postRes.body.toString('utf8')) as Record<string, unknown>;

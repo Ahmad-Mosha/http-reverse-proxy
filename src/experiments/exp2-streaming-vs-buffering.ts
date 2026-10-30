@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { ProxyServer } from '../proxy/proxy-server.js';
 
 export interface StreamingExperimentResult {
-  mode: 'naive-buffered-proxy' | 'relay-edge-streaming-proxy';
+  mode: 'naive-buffered-proxy' | 'streaming-proxy';
   concurrentClients: number;
   payloadPerClientMiB: number;
   peakBufferMemoryDeltaMiB: number;
@@ -136,15 +136,15 @@ export async function runStreamingVsBufferingExperiment(
     bufferedProxy.close(() => resolve());
   });
 
-  // 2. RelayEdge Streaming Proxy with 16 KiB highWaterMark
-  const relayEdge = new ProxyServer({
+  // 2. Streaming proxy with 16 KiB highWaterMark
+  const streamingProxy = new ProxyServer({
     port: 0,
     upstreams: [{ id: 'u1', host: '127.0.0.1', port: upstreamPort }],
     stream: {
       highWaterMarkBytes: 16 * 1024,
     },
   });
-  const { port: relayPort } = await relayEdge.listen();
+  const { port: streamingPort } = await streamingProxy.listen();
 
   const baseMemStreaming = getBufferAndHeapBytes();
   let peakMemStreaming = baseMemStreaming;
@@ -157,15 +157,15 @@ export async function runStreamingVsBufferingExperiment(
 
   const startStreaming = performance.now();
   await Promise.all(
-    Array.from({ length: concurrentClients }, () => consumeSlowly(relayPort)),
+    Array.from({ length: concurrentClients }, () => consumeSlowly(streamingPort)),
   );
   const streamingDurationMs =
     Math.round((performance.now() - startStreaming) * 100) / 100;
   clearInterval(sampleTimer2);
 
-  const drainEvents = relayEdge.getBackpressureMetrics().clientPauseCount;
+  const drainEvents = streamingProxy.getBackpressureMetrics().clientPauseCount;
 
-  await relayEdge.close();
+  await streamingProxy.close();
   await new Promise<void>((resolve) => {
     upstreamServer.closeAllConnections();
     upstreamServer.close(() => resolve());
@@ -184,7 +184,7 @@ export async function runStreamingVsBufferingExperiment(
       backpressureDrainEvents: 0,
     },
     {
-      mode: 'relay-edge-streaming-proxy',
+      mode: 'streaming-proxy',
       concurrentClients,
       payloadPerClientMiB: payloadMiB,
       peakBufferMemoryDeltaMiB: toMiB(peakMemStreaming - baseMemStreaming),

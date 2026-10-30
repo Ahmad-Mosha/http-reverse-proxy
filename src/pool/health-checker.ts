@@ -70,7 +70,7 @@ export class HealthChecker {
           path: target.healthCheckPath,
           headers: {
             host: `${target.host}:${target.port}`,
-            'user-agent': 'relay-edge-healthcheck/1.0',
+            'user-agent': 'http-reverse-proxy-healthcheck/1.0',
             connection: 'close',
           },
           agent: false,

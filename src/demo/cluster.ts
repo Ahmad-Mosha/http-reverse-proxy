@@ -63,11 +63,11 @@ async function main(): Promise<void> {
 
   const { host, port } = await proxy.listen();
   process.stdout.write(
-    `RelayEdge listening on http://${host}:${port} -> [${upstreams.map((u) => `${u.id}@127.0.0.1:${u.port}`).join(', ')}]\n`,
+    `Proxy listening on http://${host}:${port} -> [${upstreams.map((u) => `${u.id}@127.0.0.1:${u.port}`).join(', ')}]\n`,
   );
 
   const shutdown = async (): Promise<void> => {
-    process.stdout.write('\nShutting down RelayEdge and demo upstreams...\n');
+    process.stdout.write('\nShutting down the proxy and demo upstreams...\n');
     await proxy.close();
     await Promise.all(
       upstreams.map(

@@ -19,7 +19,7 @@ export interface EventLoopExperimentResult {
 }
 
 function runCpuTaskOnMainThread(iterations: number): void {
-  pbkdf2Sync('relay-edge-cpu-experiment', 'salt-value', iterations, 64, 'sha512');
+  pbkdf2Sync('cpu-experiment', 'salt-value', iterations, 64, 'sha512');
 }
 
 function runCpuTaskInWorker(iterations: number): Promise<void> {
@@ -27,7 +27,7 @@ function runCpuTaskInWorker(iterations: number): Promise<void> {
     const workerCode = `
       const { parentPort, workerData } = require('node:worker_threads');
       const { pbkdf2Sync } = require('node:crypto');
-      pbkdf2Sync('relay-edge-cpu-experiment', 'salt-value', workerData.iterations, 64, 'sha512');
+      pbkdf2Sync('cpu-experiment', 'salt-value', workerData.iterations, 64, 'sha512');
       parentPort.postMessage('done');
     `;
     const worker = new Worker(workerCode, {

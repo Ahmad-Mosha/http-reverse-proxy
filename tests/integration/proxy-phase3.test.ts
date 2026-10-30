@@ -126,8 +126,8 @@ describe('Phase 3 — Observability, Metrics, Structured Logs & Runtime Experime
         upstreams: [{ id: 'u1', host: '127.0.0.1', port: u1.port }],
         observability: {
           logLevel: 'info',
-          metricsPath: '/__relay_edge/metrics',
-          healthPath: '/__relay_edge/healthz',
+          metricsPath: '/__proxy/metrics',
+          healthPath: '/__proxy/healthz',
         },
       },
       logStream,
@@ -139,7 +139,7 @@ describe('Phase 3 — Observability, Metrics, Structured Logs & Runtime Experime
     await sendGet(proxyPort, '/hello');
     await sendGet(proxyPort, '/fail');
 
-    const healthRes = await sendGet(proxyPort, '/__relay_edge/healthz');
+    const healthRes = await sendGet(proxyPort, '/__proxy/healthz');
     assert.equal(healthRes.statusCode, 200);
     const healthJson = JSON.parse(healthRes.body) as {
       status: string;
@@ -148,7 +148,7 @@ describe('Phase 3 — Observability, Metrics, Structured Logs & Runtime Experime
     assert.equal(healthJson.status, 'healthy');
     assert.equal(healthJson.healthyUpstreams, 1);
 
-    const metricsRes = await sendGet(proxyPort, '/__relay_edge/metrics');
+    const metricsRes = await sendGet(proxyPort, '/__proxy/metrics');
     assert.equal(metricsRes.statusCode, 200);
     const snapshot = JSON.parse(metricsRes.body) as ProxyMetricsSnapshot;
 
@@ -193,7 +193,7 @@ describe('Phase 3 — Observability, Metrics, Structured Logs & Runtime Experime
   it('verifies Experiment 2 (Streaming Backpressure vs In-Memory Buffering)', async () => {
     const results = await runStreamingVsBufferingExperiment(3, 64);
     const buffered = results.find((r) => r.mode === 'naive-buffered-proxy');
-    const streaming = results.find((r) => r.mode === 'relay-edge-streaming-proxy');
+    const streaming = results.find((r) => r.mode === 'streaming-proxy');
 
     assert.ok(buffered && streaming);
     assert.ok(
